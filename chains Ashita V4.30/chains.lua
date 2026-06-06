@@ -1011,11 +1011,13 @@ ashita.events.register('d3d_present', 'present_cb', function ()
 
         if (imgui.Begin('chains', true, flags)) then
 
-            -- v4.30 (ImGui 1.92) removed SetWindowFontScale from the binding.
-            -- Scale via IO FontGlobalScale, restored after End() so the scale
-            -- does not leak onto every other addon's UI.
-            local prevFontScale = imgui.GetIO().FontGlobalScale;
-            imgui.GetIO().FontGlobalScale = chains.settings.font_scale;
+            -- v4.30 (ImGui 1.92) removed SetWindowFontScale, and the IO/style
+            -- usertypes are read-only (FontGlobalScale can be read but not
+            -- assigned). 1.92's replacement is PushFont(nil, absolute_size).
+            -- Guarded with pcall so a differing binding signature degrades to
+            -- default size instead of crashing the present callback.
+            local fontPushed = chains.settings.font_scale ~= 1.0
+                and pcall(imgui.PushFont, nil, imgui.GetFontSize() * chains.settings.font_scale);
 
             if render then
 
@@ -1096,7 +1098,7 @@ ashita.events.register('d3d_present', 'present_cb', function ()
             -- store current window position
             chains.settings.position_x, chains.settings.position_y = imgui.GetWindowPos();
 
-            imgui.GetIO().FontGlobalScale = prevFontScale;
+            if fontPushed then imgui.PopFont(); end
         end
         imgui.End();
     end
