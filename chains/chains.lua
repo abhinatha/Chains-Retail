@@ -20,8 +20,8 @@
 --]]
 
 addon.name     = 'chains';
-addon.author   = 'Sippius - Original Ashita-v3 skillchains by Ivaar';
-addon.version  = '0.8';
+addon.author   = 'Sippius, Ivaar, and NerfOnline';
+addon.version  = '0.81';
 addon.desc     = 'Display current skillchain options.';
 
 require('common');
@@ -502,17 +502,25 @@ local GetSkillchains = function(target)
         actionTable.bluskill = GetBluskills();
     end
 
+    -- Capture display toggles as strict booleans. Using `== true` instead of
+    -- bare truthiness ensures that any non-boolean value that may have crept
+    -- into the settings table (e.g. via a malformed config file) does not
+    -- accidentally enable a category that the user has toggled off.
+    local showWeapon = chains.settings.display.weapon == true;
+    local showPet    = chains.settings.display.pet    == true;
+    local showSpell  = chains.settings.display.spell  == true;
+
     -- Initialize actions with weaponskills
-    if chains.settings.display.weapon then
+    if showWeapon then
         actions = actions:extend(actionTable.wepskill);
     end
 
     -- Add skill tables based on job and active buffs
-    if chains.settings.display.pet and mainJob:any('BST','SMN') and actionTable.petskill then
+    if showPet and mainJob:any('BST','SMN') and actionTable.petskill then
         actions = actions:extend(actionTable.petskill);
-    elseif chains.settings.display.spell and enableBLU and actionTable.bluskill then
+    elseif showSpell and enableBLU and actionTable.bluskill then
         actions = actions:extend(actionTable.bluskill);
-    elseif chains.settings.display.spell and enableSCH and actionTable.schskill then
+    elseif showSpell and enableSCH and actionTable.schskill then
         actions = actions:extend(actionTable.schskill);
     end
 
@@ -807,8 +815,22 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
         end
         --=====================================================================
 
+        -- Determine whether the actor is a player or a pet in our alliance.
+        -- Computed once so the pet-toggle check below doesn't re-walk the party.
+        local actorIsPlayer = isPlayerInAlliance(actor);
+        local actorIsPet    = (not actorIsPlayer) and isPetInAlliance(actor);
+
         -- exit if actor is not in alliance
-        if not (isPlayerInAlliance(actor) or isPetInAlliance(actor)) then
+        if not (actorIsPlayer or actorIsPet) then
+            return;
+        end
+
+        -- exit if actor is a pet and pet display is disabled. This treats the
+        -- /chains pet toggle as "ignore pet-initiated chains entirely" rather
+        -- than just "hide pet abilities from the suggestion list" -- so the
+        -- chains window will not pop up for jug pets, avatars, or BST/SMN
+        -- ready/blood-pact actions when pet display is off.
+        if actorIsPet and not (chains.settings.display.pet == true) then
             return;
         end
 
@@ -989,8 +1011,13 @@ ashita.events.register('d3d_present', 'present_cb', function ()
 
         if (imgui.Begin('chains', true, flags)) then
 
+            -- v4.30 (ImGui 1.92) removed SetWindowFontScale from the binding.
+            -- Scale via IO FontGlobalScale, restored after End() so the scale
+            -- does not leak onto every other addon's UI.
+            local prevFontScale = imgui.GetIO().FontGlobalScale;
+            imgui.GetIO().FontGlobalScale = chains.settings.font_scale;
+
             if render then
-                imgui.SetWindowFontScale(chains.settings.font_scale)
 
                 local timediff = now-targetTable[targetId].ts;
                 local timer = targetTable[targetId].dur-timediff;
@@ -1056,7 +1083,6 @@ ashita.events.register('d3d_present', 'present_cb', function ()
                     end
                 end
             elseif chains.visible then
-                imgui.SetWindowFontScale(chains.settings.font_scale)
                 imgui.Text('');
                 imgui.Text('                 --- Chains ---                 ');
                 imgui.Text('         Click and drag to move display         ');
@@ -1069,6 +1095,8 @@ ashita.events.register('d3d_present', 'present_cb', function ()
 
             -- store current window position
             chains.settings.position_x, chains.settings.position_y = imgui.GetWindowPos();
+
+            imgui.GetIO().FontGlobalScale = prevFontScale;
         end
         imgui.End();
     end
@@ -1108,7 +1136,9 @@ ashita.events.register('command', 'command_cb', function (e)
     -- Settings
     --========================================================================
     if (#args == 2) and chains.settings.display:containskey(args[2]) then
-        chains.settings.display[args[2]] = not chains.settings.display[args[2]];
+        -- Toggle relative to strict-true so the stored value is always a
+        -- clean boolean, regardless of what shape the previous value had.
+        chains.settings.display[args[2]] = not (chains.settings.display[args[2]] == true);
         local outText = '%sskill: %s'
         if args[2] == 'color' then
             outText = '%s: %s'
